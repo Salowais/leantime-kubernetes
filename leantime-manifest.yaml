@@ -1,0 +1,291 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: leantime
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-secret
+  namespace: leantime
+type: Opaque
+stringData:
+  mysql-root-password: your-root-password-here
+  mysql-database: leantime
+  mysql-user: lean-user
+  mysql-password: your-user-password-here
+
+---
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: leantime-config-secret
+  namespace: leantime
+type: Opaque
+stringData:
+#  LEAN_EMAIL_SMTP_PASSWORD: somepassword
+  LEAN_EMAIL_RETURN: someone@example.com
+  LEAN_EMAIL_SMTP_HOSTS: 127.0.0.1                           #replace with a real host if using
+  LEAN_OIDC_PROVIDER_URL: https://idp.something/             #replace with a real IDP if using
+  LEAN_OIDC_CLIENT_ID: clientID                              #replace with real value if using
+  LEAN_OIDC_CLIENT_SECRET: somebigsecret                     #replace with real value if using
+  LEAN_APP_URL: https://yourleantimeURL                      # IMPORTANT - replace this
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: leantime
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: leantime-userfiles-pvc
+  namespace: leantime
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: leantime-plugins-pvc
+  namespace: leantime
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+
+---
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: leantime-public-userfiles-pvc
+  namespace: leantime
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql-leantime
+  namespace: leantime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          args:
+            - "--character-set-server=UTF8MB4"
+            - "--collation-server=UTF8MB4_unicode_ci"
+          ports:
+            - containerPort: 3306
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-root-password
+            - name: MYSQL_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-database
+            - name: MYSQL_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-user
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-password
+          volumeMounts:
+            - name: mysql-data
+              mountPath: /var/lib/mysql
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-pvc
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-leantime
+  namespace: leantime
+spec:
+  ports:
+    - port: 3306
+      targetPort: 3306
+  selector:
+    app: mysql
+  type: ClusterIP
+
+---
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leantime
+  namespace: leantime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: leantime
+  template:
+    metadata:
+      labels:
+        app: leantime
+    spec:
+      containers:
+        - name: leantime
+          image: leantime/leantime:latest
+          ports:
+            - containerPort: 80
+          env:
+            - name: LEAN_DB_HOST
+              value: mysql-leantime
+            - name: LEAN_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-user
+            - name: LEAN_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-password
+            - name: LEAN_DB_DATABASE
+              valueFrom:
+                secretKeyRef:
+                  name: mysql-secret
+                  key: mysql-database
+            - name: LEAN_EMAIL_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_EMAIL_SMTP_PASSWORD
+            - name: LEAN_EMAIL_RETURN
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_EMAIL_RETURN
+            - name: LEAN_EMAIL_SMTP_HOSTS
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_EMAIL_SMTP_HOSTS
+            - name: LEAN_OIDC_PROVIDER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_OIDC_PROVIDER_URL
+            - name: LEAN_OIDC_ENABLE
+              value: "true"
+            - name: LEAN_OIDC_CREATE_USER
+              value: "true"
+            - name: LEAN_EMAIL_SMTP_AUTH
+              value: "false"
+            - name: LEAN_EMAIL_USE_SMTP
+              value: "true"
+            - name: LEAN_EMAIL_SMTP_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_EMAIL_SMTP_PASSWORD
+            - name: LEAN_EMAIL_SMTP_PORT
+              value: "25"
+            - name: LEAN_EMAIL_SMTP_AUTO_TLS
+              value: "false"
+            - name: LEAN_OIDC_CLIENT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_OIDC_CLIENT_ID
+            - name: LEAN_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_OIDC_CLIENT_SECRET
+            - name: LEAN_PORT
+              value: "80"
+            - name: LEAN_APP_URL
+              valueFrom:
+                secretKeyRef:
+                  name: leantime-config-secret
+                  key: LEAN_APP_URL
+            - name: LEAN_APP_DIR
+              value: ""
+            - name: LEAN_DEBUG
+              value: "1"
+          volumeMounts:
+            - name: userfiles
+              mountPath: /var/www/html/userfiles
+            - name: public-userfiles
+              mountPath: /var/www/html/public/userfiles
+            - name: plugins
+              mountPath: /var/www/html/app/Plugins
+      volumes:
+        - name: userfiles
+          persistentVolumeClaim:
+            claimName: leantime-userfiles-pvc
+        - name: public-userfiles
+          persistentVolumeClaim:
+            claimName: leantime-public-userfiles-pvc
+        - name: plugins
+          persistentVolumeClaim:
+            claimName: leantime-plugins-pvc
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: leantime
+  namespace: leantime
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+  selector:
+    app: leantime
+  type: ClusterIP
